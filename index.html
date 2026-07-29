@@ -4,6 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>سامانه مدیریت اراضی بنیاد مسکن - یزد</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0b1220">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('service-worker.js').catch(e => console.warn('SW register failed', e));
+      });
+    }
+  </script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -112,10 +126,26 @@
   .field-list-item, .sheet-list-item, .user-list-item { display:flex; align-items:center; gap:8px; padding:8px 10px; background:#0c1327; border:1px solid #1f2b47; border-radius:8px; margin-bottom:6px; font-size:12px; }
   .field-list-item span.k, .sheet-list-item span.k, .user-list-item span.k { flex:1; }
   .tag { background:#1e293b; color:var(--accent); padding:1px 8px; border-radius:8px; font-size:10px; }
-  .perm-grid { display:grid; grid-template-columns:1fr auto auto; gap:6px 10px; align-items:center; font-size:11.5px; }
+  .perm-grid { display:grid; grid-template-columns:1fr auto auto auto; gap:6px 10px; align-items:center; font-size:11.5px; }
   .perm-grid .sheet-name { color:#cbd5e1; }
   .note-box { background:#0c1327; border:1px dashed #2a3a5c; border-radius:8px; padding:10px 12px; font-size:11px; color:#94a3b8; line-height:1.8; margin-bottom:12px; }
   .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#111a30; border:1px solid #2a3a5c; color:#fff; padding:10px 20px; border-radius:10px; font-size:12px; z-index:3000; display:none; max-width:420px; text-align:center; line-height:1.7; }
+
+  /* ---------- responsive / mobile ---------- */
+  @media (max-width: 820px) {
+    .login-card { width:min(360px, 92vw); padding:24px; }
+    .sv-body { flex-direction:column; }
+    .sv-sidebar { width:100%; min-width:0; height:38vh; border-left:none; border-bottom:1px solid #1e293b; }
+    .sv-map { flex:1; min-height:0; }
+    .form-grid { grid-template-columns:1fr; }
+    .modal-box { width:96vw; padding:16px; }
+    .view-toggle { flex-wrap:wrap; }
+    .toolbar-right { margin-right:0; flex-wrap:wrap; width:100%; }
+    #topbar .title { font-size:12px; }
+    #topbar { padding:0 8px; gap:8px; }
+    .perm-grid { grid-template-columns:1fr; }
+    .perm-grid .sheet-name { margin-top:8px; font-weight:700; }
+  }
 </style>
 </head>
 <body>
@@ -132,10 +162,21 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="welcomeMsgOverlay">
+    <div class="modal-box">
+      <h2 style="color:#fff; font-size:16px; margin-top:0;">📣 پیام مدیر سیستم</h2>
+      <div id="welcomeMsgText" style="color:#cbd5e1; font-size:13.5px; line-height:2; white-space:pre-wrap; max-height:300px; overflow:auto; background:#0c1327; border:1px solid #2a3a5c; border-radius:8px; padding:12px;"></div>
+      <div class="modal-actions">
+        <button class="btn primary" id="welcomeMsgOkBtn">متوجه شدم، شروع کار</button>
+      </div>
+    </div>
+  </div>
+
   <div id="appShell">
     <div id="topbar">
       <div class="title">اراضی بنیاد مسکن یزد</div>
       <div id="tabs"></div>
+      <div id="offlineBadge" style="font-size:11px; padding:3px 10px; border-radius:12px; white-space:nowrap; background:#14532d; color:#bbf7d0;">🟢 آنلاین</div>
       <div id="userBadge"></div>
       <button id="logoutBtn">خروج</button>
     </div>
@@ -188,8 +229,13 @@
           <option value="text">متنی</option>
           <option value="number">عددی</option>
           <option value="date">تاریخ</option>
+          <option value="select">کشویی (گزینه‌های از پیش تعیین‌شده)</option>
+          <option value="image">تصویر</option>
         </select>
         <button class="btn primary" id="addFieldBtn">افزودن فیلد</button>
+      </div>
+      <div id="newFieldOptionsRow" style="display:none; margin-bottom:10px;">
+        <input id="newFieldOptions" placeholder="گزینه‌ها را با ، از هم جدا کنید — مثلاً: گروه ساخت، اداره کل راه و شهرسازی، پیمانکار خصوصی" style="width:100%;">
       </div>
       <div id="fieldsList"></div>
       <h2 style="margin-top:18px;">🕓 فیلدهای پیشنهادی در انتظار تایید</h2>
@@ -260,7 +306,8 @@
         وقتی وصل کنید، کل داده‌های سامانه (سرفصل‌ها، ردیف‌ها، کاربران، پیام‌ها، ظاهر) در یک فایل به‌نام <b>samane_data.json</b> داخل پوشه مخصوص همین برنامه در Dropbox شما ذخیره می‌شود؛ هر تغییری بلافاصله در آن فایل بازنویسی می‌شود، و هر سیستمی که با «کد اتصال» به همین حساب وصل باشد، در باز شدن، آخرین نسخه را از Dropbox می‌خواند.<br><br>
         <b>پیش‌نیاز یک‌باره:</b> یک اپ رایگان در <span style="color:#93c5fd;">dropbox.com/developers/apps</span> بسازید (نوع Scoped App، دسترسی App folder)، «App key» را از آن‌جا کپی کنید. اگر این صفحه را داخل Claude پیش‌نمایش می‌کنید ممکن است اتصال Dropbox کار نکند (چون Claude آدرس ثابتی برای بازگشت اتصال نمی‌دهد)؛ برای اطمینان کامل، این فایل را یک‌بار در یک آدرس اینترنتی ثابت (مثل Netlify) میزبانی کنید و همان آدرس را در تنظیمات اپ Dropbox به‌عنوان Redirect URI ثبت کنید — جزئیات کامل در پیام بعدی.
       </div>
-      <div id="cloudStatusLine" style="font-size:12px; margin-bottom:14px; color:#94a3b8;">وضعیت: در حال بررسی...</div>
+      <div id="cloudStatusLine" style="font-size:12px; margin-bottom:6px; color:#94a3b8;">وضعیت: در حال بررسی...</div>
+      <div id="cloudSpaceLine" style="font-size:11.5px; margin-bottom:14px; color:#94a3b8;"></div>
 
       <div class="form-row"><label>App Key (از Dropbox App Console)</label><input id="dbxAppKey" placeholder="مثلاً: abcd1234efgh"></div>
       <div class="modal-actions">
@@ -282,6 +329,14 @@
         <button class="btn primary" id="dbxConnectWithCodeBtn">اتصال با کد</button>
       </div>
       <div id="cloudActionStatus" style="font-size:11px; color:#94a3b8; margin-top:10px;"></div>
+
+      <div style="margin-top:18px; border-top:1px solid #24314f; padding-top:14px;">
+        <div class="form-row"><label>💾 پشتیبان دستی (مستقل از Dropbox) — همیشه قبل از هر تغییر مهم یک نسخه دانلود کنید</label></div>
+        <button class="btn ghost" id="downloadBackupBtn">دانلود نسخه پشتیبان (فایل JSON)</button>
+        <input id="restoreBackupFile" type="file" accept="application/json" style="display:none;">
+        <button class="btn ghost" id="restoreBackupBtn" style="margin-inline-start:8px;">بازیابی از فایل پشتیبان</button>
+        <div style="font-size:10px;color:#64748b;margin-top:6px;">بازیابی، تمام داده‌های فعلی (سرفصل‌ها، ردیف‌ها، کاربران، پیام‌ها) را با محتوای فایل پشتیبان جایگزین می‌کند — فقط در صورت اطمینان کامل استفاده کنید.</div>
+      </div>
     </div>
   </div>
 
@@ -304,6 +359,7 @@ let activeSheetId = null;
 let activeView = 'map';   // 'map' | 'table'
 let editingRecordId = null;
 let schemaModalActiveSheet = null;
+let openFieldPanels = new Set(); // keys "userId:sheetId" for expanded field-permission panels in users modal
 let activityLog = [];     // [{id, ts, user, role, action, detail}]
 
 async function storeGet(key, shared) {
@@ -349,9 +405,9 @@ async function loadAll() {
   if (!activityLog) { activityLog = []; await storeSet('app_activity_log', activityLog, true); }
 }
 
-async function saveSchema() { await storeSet('app_schema', schema, true); pushSnapshotToDropbox(); }
-async function saveUsers() { await storeSet('app_users', users, true); pushSnapshotToDropbox(); }
-async function saveRecords(sheetId) { await storeSet('records_' + sheetId, recordsBySheet[sheetId] || [], true); pushSnapshotToDropbox(); }
+async function saveSchema() { await storeSet('app_schema', schema, true); return await pushSnapshotToDropbox(); }
+async function saveUsers() { await storeSet('app_users', users, true); return await pushSnapshotToDropbox(); }
+async function saveRecords(sheetId) { await storeSet('records_' + sheetId, recordsBySheet[sheetId] || [], true); return await pushSnapshotToDropbox(); }
 async function saveActivityLog() { await storeSet('app_activity_log', activityLog, true); pushSnapshotToDropbox(); }
 function logActivity(action, detail) {
   activityLog.push({
@@ -414,6 +470,15 @@ function permsFor(user, sheetId) {
   const p = (user.perms || {})[sheetId];
   return p || { view:false, edit:false };
 }
+function fieldPermsFor(user, sheetId, fieldKey) {
+  if (!user || user.role === 'admin') return { view:true, edit:true };
+  const sp = (user.perms || {})[sheetId] || { view:false, edit:false };
+  const fp = (sp.fields || {})[fieldKey];
+  return {
+    view: fp && fp.view !== undefined ? fp.view : !!sp.view,
+    edit: fp && fp.edit !== undefined ? fp.edit : !!sp.edit
+  };
+}
 
 function shahrestanFieldKey(sheet) {
   if (!sheet) return null;
@@ -446,6 +511,17 @@ document.getElementById('loginBtn').onclick = () => {
   }
   currentUser = u;
   document.getElementById('loginScreen').style.display = 'none';
+  const lastMsg = messages && messages.length ? messages[messages.length - 1] : null;
+  if (lastMsg && lastMsg.text) {
+    document.getElementById('welcomeMsgText').textContent = lastMsg.text;
+    openModal('welcomeMsgOverlay');
+  } else {
+    document.getElementById('appShell').style.display = 'flex';
+    renderShell();
+  }
+};
+document.getElementById('welcomeMsgOkBtn').onclick = () => {
+  closeModal('welcomeMsgOverlay');
   document.getElementById('appShell').style.display = 'flex';
   renderShell();
 };
@@ -466,6 +542,7 @@ function renderShell() {
   const tabsEl = document.getElementById('tabs');
   let tabsHtml = `<button class="tab-btn" data-special="guide">📘 راهنما</button>`;
   tabsHtml += `<button class="tab-btn" data-special="messages">📣 پیام‌ها</button>`;
+  tabsHtml += `<button class="tab-btn" data-special="search">🔎 جستجو و گزارش</button>`;
   tabsHtml += visibleSheets.map(s => `<button class="tab-btn" data-sheet="${s.id}">${s.name}</button>`).join('');
   if (currentUser.role === 'admin') {
     tabsHtml += `<button class="tab-btn" data-admin="schema">⚙️ سرفصل‌ها${(schema.pendingFields||[]).length ? ' 🔴' : ''}</button>`;
@@ -524,6 +601,7 @@ function switchSpecialTab(which) {
   if (btn) btn.classList.add('active');
   if (which === 'guide') renderGuideContent();
   if (which === 'messages') renderMessagesContent();
+  if (which === 'search') renderSearchReportContent();
   if (which === 'activity') renderActivityLogContent();
 }
 
@@ -551,9 +629,252 @@ function renderActivityLogContent() {
 }
 
 /* =====================================================================
-   CONTENT: map + list + editable table
+   SEARCH + CUSTOM REPORT BUILDER
 ===================================================================== */
-let leafletMap = null;
+let reportLastResult = []; // [{sheet, rec}] kept for excel export after running a report
+
+function visibleSheetsFor(user) {
+  return schema.sheets.filter(s => permsFor(user, s.id).view);
+}
+
+function renderSearchReportContent() {
+  const content = document.getElementById('content');
+  const sheets = visibleSheetsFor(currentUser);
+  content.innerHTML = `
+    <div class="sheet-view active" style="flex-direction:column; overflow:auto; padding:20px 24px;">
+      <h1 style="color:#fff; font-size:17px; margin-top:0;">🔎 جستجو و گزارش‌گیری</h1>
+
+      <div style="background:#111a30;border:1px solid #24314f;border-radius:10px;padding:14px;margin-bottom:16px;">
+        <div class="form-row"><label>جستجوی سراسری در همه‌ی سرفصل‌هایی که به آن‌ها دسترسی دارید</label>
+          <input id="globalSearchInput" placeholder="نام زمین، شماره قرارداد، یا هر مقدار دیگری را تایپ کنید...">
+        </div>
+        <div id="globalSearchResults" style="max-height:260px; overflow:auto;"></div>
+      </div>
+
+      <div style="background:#111a30;border:1px solid #24314f;border-radius:10px;padding:14px;">
+        <h3 style="color:#fff; font-size:14px; margin-top:0;">ساخت گزارش سفارشی</h3>
+
+        <div class="form-row"><label>۱) کدام سرفصل‌ها؟</label>
+          <div id="repSheetChecks" style="display:flex; flex-wrap:wrap; gap:10px; font-size:12px;">
+            ${sheets.map(s => `<label><input type="checkbox" class="rep-sheet-chk" value="${s.id}" checked> ${s.name}</label>`).join('')}
+          </div>
+        </div>
+
+        <div class="form-row"><label>۲) شهرستان (اختیاری)</label>
+          <div id="repShahrestanRow"></div>
+        </div>
+
+        <div class="form-row"><label>۳) کدام فیلدها در نتیجه نمایش داده شوند؟</label>
+          <div id="repFieldsRow" style="max-height:180px; overflow:auto; display:flex; flex-wrap:wrap; gap:8px; font-size:12px;"></div>
+        </div>
+
+        <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:center; margin-top:6px;">
+          <div class="form-row" style="margin:0; min-width:160px;"><label style="color:#94a3b8;">نمودار بر اساس</label>
+            <select id="repChartField"><option value="">— بدون نمودار —</option></select>
+          </div>
+          <div class="form-row" style="margin:0; min-width:130px;"><label style="color:#94a3b8;">نوع نمودار</label>
+            <select id="repChartType"><option value="bar">میله‌ای</option><option value="line">خطی</option><option value="pie">دایره‌ای</option></select>
+          </div>
+        </div>
+
+        <div style="margin-top:12px; display:flex; gap:8px;">
+          <button class="btn primary" id="runReportBtn">اجرای گزارش</button>
+          <button class="btn ghost" id="reportExportExcelBtn">خروجی اکسل نتیجه</button>
+        </div>
+      </div>
+
+      <div id="reportResultArea" style="margin-top:16px;"></div>
+    </div>`;
+
+  document.getElementById('globalSearchInput').oninput = (e) => runGlobalSearch(e.target.value.trim());
+
+  document.querySelectorAll('.rep-sheet-chk').forEach(chk => chk.onchange = updateReportOptions);
+  updateReportOptions();
+  document.getElementById('runReportBtn').onclick = runCustomReport;
+  document.getElementById('reportExportExcelBtn').onclick = exportReportToExcel;
+}
+
+function getSelectedReportSheets() {
+  const ids = [...document.querySelectorAll('.rep-sheet-chk:checked')].map(c => c.value);
+  return schema.sheets.filter(s => ids.includes(s.id));
+}
+
+function updateReportOptions() {
+  const sel = getSelectedReportSheets();
+
+  // شهرستان options: union of distinct values from any شهرستان field in selected sheets, respecting user's own county restriction
+  const shSet = new Set();
+  sel.forEach(s => {
+    const key = shahrestanFieldKey(s);
+    if (!key) return;
+    (recordsBySheet[s.id] || []).forEach(r => {
+      if (!recordVisibleToUser(r, s, currentUser)) return;
+      const v = (r.fields[key] || '').toString().trim();
+      if (v) shSet.add(v);
+    });
+  });
+  const shRow = document.getElementById('repShahrestanRow');
+  if (!shSet.size) {
+    shRow.innerHTML = `<div style="font-size:11px;color:#64748b;">هیچ‌کدام از سرفصل‌های انتخاب‌شده فیلد «شهرستان» ندارند.</div>`;
+  } else {
+    shRow.innerHTML = `<select id="repShahrestanSelect"><option value="">— همه شهرستان‌ها —</option>${
+      [...shSet].sort().map(v => `<option value="${v}">${v}</option>`).join('')
+    }</select>`;
+  }
+
+  // fields: union across selected sheets, respecting field-level view permission, prefixed with sheet name when >1 sheet selected
+  const fieldsRow = document.getElementById('repFieldsRow');
+  const chartFieldSel = document.getElementById('repChartField');
+  let fieldOptions = [];
+  sel.forEach(s => {
+    s.fields.filter(f => fieldPermsFor(currentUser, s.id, f.key).view).forEach(f => {
+      fieldOptions.push({ sheetId: s.id, sheetName: s.name, key: f.key, label: f.label, prefixed: (sel.length > 1 ? (s.name + ' — ' + f.label) : f.label) });
+    });
+  });
+  fieldsRow.innerHTML = fieldOptions.map(o =>
+    `<label><input type="checkbox" class="rep-field-chk" data-sheet="${o.sheetId}" data-key="${o.key}" checked> ${o.prefixed}</label>`
+  ).join('') || '<div style="font-size:11px;color:#64748b;">سرفصلی انتخاب نشده است.</div>';
+
+  chartFieldSel.innerHTML = '<option value="">— بدون نمودار —</option>' + fieldOptions.map(o =>
+    `<option value="${o.sheetId}::${o.key}">${o.prefixed}</option>`
+  ).join('');
+}
+
+function runGlobalSearch(q) {
+  const resEl = document.getElementById('globalSearchResults');
+  if (!q) { resEl.innerHTML = ''; return; }
+  const qLower = q.toLowerCase();
+  const sheets = visibleSheetsFor(currentUser);
+  let rows = [];
+  sheets.forEach(s => {
+    (recordsBySheet[s.id] || []).forEach(r => {
+      if (!recordVisibleToUser(r, s, currentUser)) return;
+      let matchLabel = null, matchValue = null;
+      if ((r.name || '').toLowerCase().indexOf(qLower) !== -1) { matchLabel = 'نام'; matchValue = r.name; }
+      if (!matchLabel) {
+        for (const f of s.fields) {
+          if (!fieldPermsFor(currentUser, s.id, f.key).view) continue;
+          const v = r.fields[f.key];
+          if (v !== null && v !== undefined && String(v).toLowerCase().indexOf(qLower) !== -1) {
+            matchLabel = f.label; matchValue = v; break;
+          }
+        }
+      }
+      if (matchLabel) rows.push({ sheet: s, rec: r, matchLabel, matchValue });
+    });
+  });
+  rows = rows.slice(0, 200);
+  if (!rows.length) { resEl.innerHTML = '<div style="font-size:12px;color:#64748b;padding:8px 0;">نتیجه‌ای یافت نشد.</div>'; return; }
+  resEl.innerHTML = `<table class="data-grid" style="width:100%;">
+    <thead><tr><th>سرفصل</th><th>نام</th><th>فیلد منطبق</th><th>مقدار</th><th></th></tr></thead>
+    <tbody>${rows.map((row,i) => `<tr>
+      <td>${row.sheet.name}</td><td>${row.rec.name||'(بدون نام)'}</td><td>${row.matchLabel}</td><td>${row.matchValue}</td>
+      <td><button class="mini-btn" data-jump="${i}">مشاهده</button></td>
+    </tr>`).join('')}</tbody></table>`;
+  resEl.querySelectorAll('[data-jump]').forEach(b => b.onclick = () => {
+    const row = rows[parseInt(b.getAttribute('data-jump'))];
+    switchSheet(row.sheet.id);
+    setTimeout(() => openRecordModal(row.sheet.id, row.rec.id), 50);
+  });
+}
+
+function runCustomReport() {
+  const sel = getSelectedReportSheets();
+  const shValue = (document.getElementById('repShahrestanSelect') || {}).value || '';
+  const checkedFields = [...document.querySelectorAll('.rep-field-chk:checked')].map(c => ({ sheetId: c.getAttribute('data-sheet'), key: c.getAttribute('data-key') }));
+  const chartSel = document.getElementById('repChartField').value;
+  const chartType = document.getElementById('repChartType').value;
+
+  let results = [];
+  sel.forEach(s => {
+    const shKey = shahrestanFieldKey(s);
+    (recordsBySheet[s.id] || []).forEach(r => {
+      if (!recordVisibleToUser(r, s, currentUser)) return;
+      if (shValue && shKey && (r.fields[shKey] || '').toString().trim() !== shValue) return;
+      results.push({ sheet: s, rec: r });
+    });
+  });
+  reportLastResult = { results, checkedFields, sheetsMulti: sel.length > 1 };
+
+  const resultArea = document.getElementById('reportResultArea');
+  if (!results.length) {
+    resultArea.innerHTML = '<div class="note-box">هیچ ردیفی با این شرایط پیدا نشد.</div>';
+    return;
+  }
+  const cols = checkedFields.length ? checkedFields : [];
+  const header = ['سرفصل', 'نام', ...cols.map(c => {
+    const s = schema.sheets.find(x=>x.id===c.sheetId);
+    const f = s.fields.find(x=>x.key===c.key);
+    return sel.length > 1 ? (s.name + ' — ' + f.label) : f.label;
+  })];
+  const rowsHtml = results.map(({sheet, rec}) => {
+    const cells = cols.map(c => {
+      if (c.sheetId !== sheet.id) return '';
+      const v = rec.fields[c.key];
+      return (v === null || v === undefined) ? '' : v;
+    });
+    return `<tr><td>${sheet.name}</td><td>${rec.name||'(بدون نام)'}</td>${cells.map(v=>`<td>${v}</td>`).join('')}</tr>`;
+  }).join('');
+
+  let chartHtml = '';
+  if (chartSel) {
+    const [chSheetId, chKey] = chartSel.split('::');
+    const grouped = {};
+    results.forEach(({sheet, rec}) => {
+      if (sheet.id !== chSheetId) return;
+      const v = (rec.fields[chKey] ?? 'نامشخص').toString();
+      grouped[v] = (grouped[v] || 0) + 1;
+    });
+    chartHtml = `<div style="background:#111a30;border:1px solid #24314f;border-radius:10px;padding:14px;margin-top:14px; height:340px;"><canvas id="reportChartCanvas"></canvas></div>`;
+    setTimeout(() => {
+      const palette = ['#2563eb','#16a34a','#ea580c','#7c3aed','#0891b2','#dc2626','#65a30d','#c026d3','#0d9488','#eab308'];
+      const ctx = document.getElementById('reportChartCanvas').getContext('2d');
+      if (window.reportChartInstance) window.reportChartInstance.destroy();
+      const labels = Object.keys(grouped), values = Object.values(grouped);
+      window.reportChartInstance = new Chart(ctx, {
+        type: chartType,
+        data: { labels, datasets: [{ label: 'تعداد', data: values,
+          backgroundColor: chartType === 'line' ? 'rgba(37,99,235,.25)' : labels.map((_,i)=>palette[i % palette.length]),
+          borderColor: chartType === 'line' ? '#2563eb' : undefined,
+          fill: chartType === 'line', tension: chartType === 'line' ? .3 : 0 }] },
+        options: { responsive:true, maintainAspectRatio:false,
+          plugins: { legend:{labels:{color:'#e2e8f0'}}, title:{display:true, text:'تعداد بر اساس ' + chKey, color:'#fff'} },
+          scales: (chartType==='bar'||chartType==='line') ? { x:{ticks:{color:'#cbd5e1'}}, y:{ticks:{color:'#cbd5e1'}} } : {} }
+      });
+    }, 30);
+  }
+
+  resultArea.innerHTML = `
+    <div class="note-box">تعداد نتایج: ${results.length}</div>
+    ${chartHtml}
+    <div style="overflow:auto; margin-top:14px;">
+      <table class="data-grid" style="width:100%;">
+        <thead><tr>${header.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>`;
+}
+
+function exportReportToExcel() {
+  if (!reportLastResult.results || !reportLastResult.results.length) { showToast('اول یک گزارش اجرا کنید'); return; }
+  const { results, checkedFields, sheetsMulti } = reportLastResult;
+  const rows = results.map(({sheet, rec}) => {
+    const row = { 'سرفصل': sheet.name, 'نام': rec.name || '' };
+    checkedFields.forEach(c => {
+      if (c.sheetId !== sheet.id) return;
+      const f = sheet.fields.find(x=>x.key===c.key);
+      const label = sheetsMulti ? (sheet.name + ' - ' + f.label) : f.label;
+      row[label] = excelCellVal(f, rec.fields[c.key]);
+    });
+    return row;
+  });
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'گزارش');
+  XLSX.writeFile(wb, 'گزارش_سفارشی.xlsx');
+}
+
+
 let markerLayerGroup = null;
 
 function renderContent() {
@@ -586,12 +907,17 @@ function renderContent() {
   else renderChartView(sheet);
 }
 
+function excelCellVal(f, v) {
+  if (f && f.type === 'image') return (v && typeof v === 'string' && v.indexOf('data:image') === 0) ? 'دارد' : '';
+  return v ?? '';
+}
 function exportSheetToExcel(sheet) {
   const wb = XLSX.utils.book_new();
-  const recs = recordsBySheet[sheet.id] || [];
+  const visibleFields = sheet.fields.filter(f => fieldPermsFor(currentUser, sheet.id, f.key).view);
+  const recs = (recordsBySheet[sheet.id] || []).filter(r => recordVisibleToUser(r, sheet, currentUser));
   const rows = recs.map(r => {
     const row = { 'نام': r.name, 'lat': r.lat || '', 'lon': r.lon || '' };
-    sheet.fields.forEach(f => { row[f.label] = r.fields[f.key] ?? ''; });
+    visibleFields.forEach(f => { row[f.label] = excelCellVal(f, r.fields[f.key]); });
     return row;
   });
   const ws = XLSX.utils.json_to_sheet(rows);
@@ -639,8 +965,15 @@ function renderMapView(sheet, perm) {
   function buildPopup(rec) {
     let rows = '';
     for (const f of sheet.fields) {
+      if (!fieldPermsFor(currentUser, sheet.id, f.key).view) continue;
       const v = rec.fields[f.key];
       if (v === null || v === undefined || v === '') continue;
+      if (f.type === 'image') {
+        if (typeof v === 'string' && v.indexOf('data:image') === 0) {
+          rows += `<tr><td class="k">${f.label}</td><td><img src="${v}" style="width:50px;height:50px;object-fit:cover;border-radius:5px;"></td></tr>`;
+        }
+        continue;
+      }
       rows += `<tr><td class="k">${f.label}</td><td>${v}</td></tr>`;
     }
     return `<div style="font-weight:700; margin-bottom:6px;">${rec.name||'(بدون نام)'}</div><table class="popup-table">${rows}</table>`;
@@ -683,12 +1016,24 @@ function renderMapView(sheet, perm) {
 
 function renderTableView(sheet, perm) {
   const body = document.getElementById('sheetBody');
-  const columns = [{key:'__name', label:'نام'}, ...sheet.fields.map(f=>({key:f.key,label:f.label})), {key:'__coords', label:'مختصات'}];
+  const visibleFields = sheet.fields.filter(f => fieldPermsFor(currentUser, sheet.id, f.key).view);
+  const columns = [{key:'__name', label:'نام'}, ...visibleFields.map(f=>({key:f.key,label:f.label})), {key:'__coords', label:'مختصات'}];
 
   function cellValue(r, colKey) {
     if (colKey === '__name') return r.name || '';
     if (colKey === '__coords') return r.lat ? (r.lat.toFixed(4)+', '+r.lon.toFixed(4)) : '';
     return r.fields[colKey] ?? '';
+  }
+  function cellDisplayHtml(r, colKey) {
+    const f = sheet.fields.find(x=>x.key===colKey);
+    if (f && f.type === 'image') {
+      const v = r.fields[colKey];
+      if (v && typeof v === 'string' && v.indexOf('data:image') === 0) {
+        return `<img src="${v}" style="width:36px;height:36px;object-fit:cover;border-radius:5px;cursor:zoom-in;" data-imgzoom="${v.replace(/"/g,'&quot;')}">`;
+      }
+      return '<span style="color:#475569;">—</span>';
+    }
+    return cellValue(r, colKey);
   }
 
   function draw(filters) {
@@ -704,7 +1049,7 @@ function renderTableView(sheet, perm) {
     let thead = '<tr>' + columns.map(c=>`<th>${c.label}</th>`).join('') + (perm.edit ? '<th>عملیات</th>' : '') + '</tr>';
     thead += '<tr>' + columns.map(c=>`<th><input class="col-filter" data-col="${c.key}" placeholder="فیلتر..." style="width:100%;font-size:10.5px;padding:3px 5px;border-radius:5px;border:1px solid #334155;background:#0c1327;color:#fff;" value="${filters[c.key]||''}"></th>`).join('') + (perm.edit ? '<th></th>' : '') + '</tr>';
     let rows = recs.map((r) => {
-      let tds = columns.map(c => `<td>${cellValue(r, c.key)}</td>`).join('');
+      let tds = columns.map(c => `<td>${cellDisplayHtml(r, c.key)}</td>`).join('');
       if (perm.edit) {
         tds += `<td class="actions-cell"><button class="row-btn edit" data-edit="${r.id}">✏️</button><button class="row-btn del" data-del="${r.id}">🗑</button></td>`;
       }
@@ -721,6 +1066,10 @@ function renderTableView(sheet, perm) {
         if (toFocus) { toFocus.focus(); toFocus.selectionStart = toFocus.selectionEnd = toFocus.value.length; }
       });
     });
+    body.querySelectorAll('[data-imgzoom]').forEach(img => img.onclick = () => {
+      const w = window.open('', '_blank');
+      if (w) w.document.write(`<title>تصویر</title><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;height:100vh;"><img src="${img.getAttribute('data-imgzoom')}" style="max-width:100%;max-height:100%;"></body>`);
+    });
     if (perm.edit) {
       body.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openRecordModal(sheet.id, b.getAttribute('data-edit')));
       body.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if(confirm('این ردیف حذف شود؟')) { await deleteRecord(sheet.id, b.getAttribute('data-del')); renderContent(); } });
@@ -731,8 +1080,9 @@ function renderTableView(sheet, perm) {
 
 function renderChartView(sheet) {
   const body = document.getElementById('sheetBody');
-  const catFields = sheet.fields.filter(f => f.type !== 'number');
-  const numFields = sheet.fields.filter(f => f.type === 'number');
+  const visibleFieldsForChart = sheet.fields.filter(f => fieldPermsFor(currentUser, sheet.id, f.key).view);
+  const catFields = visibleFieldsForChart.filter(f => f.type !== 'number');
+  const numFields = visibleFieldsForChart.filter(f => f.type === 'number');
   body.innerHTML = `
     <div style="flex:1; display:flex; flex-direction:column; padding:16px; overflow:auto;">
       <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end; margin-bottom:16px; background:#0f172a; padding:12px 14px; border-radius:10px;">
@@ -746,7 +1096,7 @@ function renderChartView(sheet) {
           </select>
         </div>
         <div class="form-row" style="margin:0; min-width:130px;"><label style="color:#94a3b8;">نوع نمودار</label>
-          <select id="chartType"><option value="bar">میله‌ای</option><option value="pie">دایره‌ای</option><option value="doughnut">حلقوی</option></select>
+          <select id="chartType"><option value="bar">میله‌ای</option><option value="line">خطی</option><option value="pie">دایره‌ای</option></select>
         </div>
         <button class="btn primary" id="drawChartBtn">رسم نمودار</button>
       </div>
@@ -798,12 +1148,15 @@ function renderChartView(sheet) {
     chartInstance = new Chart(ctx, {
       type: chartType,
       data: { labels, datasets: [{ label: sheet.name, data: values,
-        backgroundColor: labels.map((_,i)=>palette[i % palette.length]) }] },
+        backgroundColor: chartType === 'line' ? 'rgba(37,99,235,.25)' : labels.map((_,i)=>palette[i % palette.length]),
+        borderColor: chartType === 'line' ? '#2563eb' : undefined,
+        fill: chartType === 'line',
+        tension: chartType === 'line' ? .3 : 0 }] },
       options: {
         responsive:true,
         maintainAspectRatio:false,
         plugins: { legend: { labels: { color:'#e2e8f0' } }, title: { display:true, text: sheet.name, color:'#fff', font:{size:14} } },
-        scales: chartType === 'bar' ? { x:{ticks:{color:'#cbd5e1'}}, y:{ticks:{color:'#cbd5e1'}} } : {}
+        scales: (chartType === 'bar' || chartType === 'line') ? { x:{ticks:{color:'#cbd5e1'}}, y:{ticks:{color:'#cbd5e1'}} } : {}
       }
     });
   }
@@ -832,6 +1185,30 @@ document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => {
   if (id === 'schemaModalOverlay' || id === 'usersModalOverlay' || id === 'cloudModalOverlay') renderShell();
 });
 
+function compressImageFile(file, maxDim = 1000, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('read failed'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('image decode failed'));
+      img.onload = () => {
+        let width = img.width, height = img.height;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+          else { width = Math.round(width * maxDim / height); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function openRecordModal(sheetId, recId) {
   const sheet = schema.sheets.find(s=>s.id===sheetId);
   const rec = recId ? (recordsBySheet[sheetId]||[]).find(r=>r.id===recId) : null;
@@ -844,11 +1221,58 @@ function openRecordModal(sheetId, recId) {
   const dyn = document.getElementById('dynamicFields');
   dyn.innerHTML = `<div class="form-row" style="grid-column:1/3;"><label>نام / شرح</label><input id="fld_name" value="${rec? (rec.name||'').replace(/"/g,'&quot;') : ''}"></div>` +
     sheet.fields.map(f => {
+      const fp = fieldPermsFor(currentUser, sheetId, f.key);
+      if (!fp.view) return '';
       const v = rec ? (rec.fields[f.key] ?? '') : '';
+      const disabledAttr = fp.edit ? '' : 'disabled';
+      if (f.type === 'image') {
+        const hasImg = v && typeof v === 'string' && v.indexOf('data:image') === 0;
+        return `<div class="form-row" style="grid-column:1/3;">
+          <label>${f.label}${fp.edit?'':' 🔒'}</label>
+          <input type="hidden" data-field="${f.key}" value="${hasImg ? v : ''}">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <img data-imgpreview="${f.key}" src="${hasImg ? v : ''}" style="max-width:120px; max-height:120px; border-radius:8px; border:1px solid #2a3a5c; ${hasImg?'':'display:none;'}">
+            ${fp.edit ? `<input type="file" accept="image/*" data-imginput="${f.key}">
+            <button type="button" class="mini-btn danger" data-imgclear="${f.key}" style="${hasImg?'':'display:none;'}">حذف تصویر</button>` : (hasImg?'':'<span style="font-size:11px;color:#64748b;">تصویری ثبت نشده</span>')}
+          </div>
+        </div>`;
+      }
+      if (f.type === 'select') {
+        const opts = f.options || [];
+        const optsHtml = ['<option value="">— انتخاب کنید —</option>'].concat(
+          opts.map(o => `<option value="${o.replace(/"/g,'&quot;')}" ${String(v)===o?'selected':''}>${o}</option>`)
+        ).join('');
+        return `<div class="form-row"><label>${f.label}${fp.edit?'':' 🔒'}</label><select data-field="${f.key}" ${disabledAttr}>${optsHtml}</select></div>`;
+      }
       const type = f.type === 'number' ? 'number' : (f.type === 'date' ? 'text' : 'text');
-      return `<div class="form-row"><label>${f.label}</label><input data-field="${f.key}" type="${type}" value="${String(v).replace(/"/g,'&quot;')}"></div>`;
+      return `<div class="form-row"><label>${f.label}${fp.edit?'':' 🔒'}</label><input data-field="${f.key}" type="${type}" value="${String(v).replace(/"/g,'&quot;')}" ${disabledAttr}></div>`;
     }).join('') +
     `<div class="form-row" style="grid-column:1/3; text-align:left;"><button type="button" class="btn ghost" id="proposeFieldBtn" style="font-size:11px;">➕ ${currentUser.role==='admin' ? 'افزودن فیلد جدید به این سرفصل' : 'پیشنهاد فیلد جدید به مدیر سیستم'}</button></div>`;
+  sheet.fields.filter(f => f.type === 'image').forEach(f => {
+    const fileInp = dyn.querySelector(`[data-imginput="${f.key}"]`);
+    if (!fileInp) return;
+    fileInp.onchange = async () => {
+      const file = fileInp.files[0];
+      if (!file) return;
+      try {
+        showToast('در حال فشرده‌سازی تصویر...');
+        const dataUrl = await compressImageFile(file);
+        dyn.querySelector(`[data-field="${f.key}"]`).value = dataUrl;
+        const img = dyn.querySelector(`[data-imgpreview="${f.key}"]`);
+        img.src = dataUrl; img.style.display = '';
+        const clearBtn = dyn.querySelector(`[data-imgclear="${f.key}"]`);
+        if (clearBtn) clearBtn.style.display = '';
+        showToast('تصویر آماده شد — برای ثبت نهایی، دکمه «ذخیره» را بزنید');
+      } catch (e) { console.error(e); showToast('خطا در پردازش تصویر'); }
+    };
+    const clearBtn = dyn.querySelector(`[data-imgclear="${f.key}"]`);
+    if (clearBtn) clearBtn.onclick = () => {
+      dyn.querySelector(`[data-field="${f.key}"]`).value = '';
+      const img = dyn.querySelector(`[data-imgpreview="${f.key}"]`);
+      img.src = ''; img.style.display = 'none';
+      clearBtn.style.display = 'none';
+    };
+  });
   document.getElementById('proposeFieldBtn').onclick = () => proposeOrAddField(sheetId);
   document.getElementById('saveRecordBtn').onclick = () => saveRecordFromModal(sheetId);
   document.getElementById('calcCoordBtn').onclick = () => {
@@ -887,10 +1311,12 @@ async function saveRecordFromModal(sheetId) {
   const name = document.getElementById('fld_name').value;
   const lat = parseFloat(document.getElementById('latInput').value);
   const lon = parseFloat(document.getElementById('lonInput').value);
-  const fields = {};
+  const existingRec = editingRecordId ? (recordsBySheet[sheetId]||[]).find(r=>r.id===editingRecordId) : null;
+  const fields = existingRec ? { ...existingRec.fields } : {}; // start from existing values so hidden (no-view) fields are preserved
   document.querySelectorAll('#dynamicFields [data-field]').forEach(inp => {
     const key = inp.getAttribute('data-field');
     const f = sheet.fields.find(x=>x.key===key);
+    if (fieldPermsFor(currentUser, sheetId, key).edit === false) return; // read-only field: keep original value, ignore any DOM value
     let v = inp.value;
     if (f && f.type === 'number' && v !== '') v = parseFloat(v);
     fields[key] = v === '' ? null : v;
@@ -907,10 +1333,14 @@ async function saveRecordFromModal(sheetId) {
     recordsBySheet[sheetId].push(newRec);
     logActivity('افزودن ردیف', 'سرفصل «' + sheet.name + '» — ردیف «' + (name||'بدون نام') + '»');
   }
-  await saveRecords(sheetId);
+  const synced = await saveRecords(sheetId);
   closeModal('recordModalOverlay');
   renderContent();
-  showToast('ذخیره شد');
+  if (synced) {
+    showToast('ذخیره شد ✅');
+  } else {
+    showToast('⚠️ به اینترنت/Dropbox وصل نشد — این تغییر فقط موقتاً روی همین صفحه است و با رفرش یا بستن صفحه از بین می‌رود. لطفاً اتصال اینترنت را بررسی کنید و دوباره ذخیره کنید.');
+  }
 }
 
 /* =====================================================================
@@ -1006,11 +1436,32 @@ function renderFieldsList() {
   nameEl.textContent = sheet ? sheet.name : '—';
   const el = document.getElementById('fieldsList');
   if (!sheet) { el.innerHTML = ''; return; }
+  const typeLabel = t => t === 'number' ? 'عددی' : t === 'date' ? 'تاریخ' : t === 'select' ? 'کشویی' : t === 'image' ? 'تصویر' : 'متنی';
   el.innerHTML = sheet.fields.map(f => `
-    <div class="field-list-item">
+    <div class="field-list-item" data-fielditem="${f.key}">
       <span class="k">${f.label}</span>
-      <span class="tag">${f.type === 'number' ? 'عددی' : f.type === 'date' ? 'تاریخ' : 'متنی'}</span>
+      <span class="tag">${typeLabel(f.type)}${f.type==='select' ? ' ('+(f.options||[]).length+' گزینه)' : ''}</span>
+      <button class="mini-btn" data-editfield="${f.key}">ویرایش</button>
       <button class="mini-btn danger" data-delfield="${f.key}">حذف</button>
+    </div>
+    <div class="field-edit-row" data-editrow="${f.key}" style="display:none; padding:8px 10px 14px; border-bottom:1px solid #24314f;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+        <input data-editlabel="${f.key}" value="${f.label.replace(/"/g,'&quot;')}" style="flex:1; min-width:140px;">
+        <select data-edittype="${f.key}">
+          <option value="text" ${f.type==='text'?'selected':''}>متنی</option>
+          <option value="number" ${f.type==='number'?'selected':''}>عددی</option>
+          <option value="date" ${f.type==='date'?'selected':''}>تاریخ</option>
+          <option value="select" ${f.type==='select'?'selected':''}>کشویی (گزینه‌های از پیش تعیین‌شده)</option>
+          <option value="image" ${f.type==='image'?'selected':''}>تصویر</option>
+        </select>
+      </div>
+      <div data-editoptrow="${f.key}" style="display:${f.type==='select'?'block':'none'}; margin-top:8px;">
+        <input data-editoptions="${f.key}" value="${(f.options||[]).join('، ').replace(/"/g,'&quot;')}" placeholder="گزینه‌ها را با ، از هم جدا کنید" style="width:100%;">
+      </div>
+      <div style="margin-top:8px; text-align:left;">
+        <button class="btn ghost" data-canceledit="${f.key}" style="font-size:11px;">انصراف</button>
+        <button class="btn primary" data-saveedit="${f.key}" style="font-size:11px;">ذخیره تغییرات</button>
+      </div>
     </div>`).join('');
   el.querySelectorAll('[data-delfield]').forEach(b => b.onclick = async () => {
     const fkey = b.getAttribute('data-delfield');
@@ -1020,6 +1471,44 @@ function renderFieldsList() {
     logActivity('حذف فیلد', 'فیلد «' + fLabel + '» از سرفصل «' + sheet.name + '» حذف شد');
     renderFieldsList();
   });
+  el.querySelectorAll('[data-editfield]').forEach(b => b.onclick = () => {
+    const fkey = b.getAttribute('data-editfield');
+    el.querySelector(`[data-editrow="${fkey}"]`).style.display = 'block';
+  });
+  el.querySelectorAll('[data-canceledit]').forEach(b => b.onclick = () => {
+    const fkey = b.getAttribute('data-canceledit');
+    el.querySelector(`[data-editrow="${fkey}"]`).style.display = 'none';
+  });
+  el.querySelectorAll('[data-edittype]').forEach(sel => sel.onchange = () => {
+    const fkey = sel.getAttribute('data-edittype');
+    el.querySelector(`[data-editoptrow="${fkey}"]`).style.display = (sel.value === 'select') ? 'block' : 'none';
+  });
+  el.querySelectorAll('[data-saveedit]').forEach(b => b.onclick = async () => {
+    const fkey = b.getAttribute('data-saveedit');
+    const f = sheet.fields.find(x=>x.key===fkey);
+    if (!f) return;
+    const newLabel = el.querySelector(`[data-editlabel="${fkey}"]`).value.trim();
+    const newType = el.querySelector(`[data-edittype="${fkey}"]`).value;
+    if (!newLabel) { showToast('نام فیلد نمی‌تواند خالی باشد'); return; }
+    if (newType === 'select') {
+      const opts = parseOptionsInput(el.querySelector(`[data-editoptions="${fkey}"]`).value);
+      if (!opts.length) { showToast('برای فیلد کشویی، حداقل یک گزینه وارد کنید'); return; }
+      f.options = opts;
+    } else {
+      delete f.options;
+    }
+    f.label = newLabel; f.type = newType;
+    await saveSchema();
+    logActivity('ویرایش فیلد', 'فیلد «' + newLabel + '» در سرفصل «' + sheet.name + '» ویرایش شد');
+    renderFieldsList();
+    showToast('فیلد به‌روزرسانی شد');
+  });
+}
+document.getElementById('newFieldType').onchange = () => {
+  document.getElementById('newFieldOptionsRow').style.display = (document.getElementById('newFieldType').value === 'select') ? 'block' : 'none';
+};
+function parseOptionsInput(raw) {
+  return raw.split(/[،,]/).map(s=>s.trim()).filter(Boolean);
 }
 document.getElementById('addFieldBtn').onclick = async () => {
   const sheet = schema.sheets.find(s=>s.id===schemaModalActiveSheet);
@@ -1028,9 +1517,18 @@ document.getElementById('addFieldBtn').onclick = async () => {
   if (!label) return;
   const type = document.getElementById('newFieldType').value;
   const key = label + '_' + Date.now();
-  sheet.fields.push({ key, label, type, coordSource:false });
+  const field = { key, label, type, coordSource:false };
+  if (type === 'select') {
+    const opts = parseOptionsInput(document.getElementById('newFieldOptions').value);
+    if (!opts.length) { showToast('برای فیلد کشویی، حداقل یک گزینه وارد کنید'); return; }
+    field.options = opts;
+  }
+  sheet.fields.push(field);
   await saveSchema();
   document.getElementById('newFieldLabel').value = '';
+  document.getElementById('newFieldOptions').value = '';
+  document.getElementById('newFieldOptionsRow').style.display = 'none';
+  document.getElementById('newFieldType').value = 'text';
   renderFieldsList();
   logActivity('افزودن فیلد', 'فیلد «' + label + '» به سرفصل «' + sheet.name + '» اضافه شد');
   showToast('فیلد اضافه شد');
@@ -1057,11 +1555,28 @@ function renderUsersList() {
         <button class="mini-btn" data-saveshahrestan="${u.id}">ذخیره شهرستان‌ها</button>
       </div>` : ''}
       ${u.role === 'user' ? `<div class="perm-grid" data-permsfor="${u.id}">` +
-        schema.sheets.map(s => `
+        schema.sheets.map(s => {
+          const sp = ((u.perms||{})[s.id]||{});
+          const fieldsHtml = s.fields.map(f => {
+            const fp = (sp.fields||{})[f.key] || {};
+            const vChecked = fp.view !== undefined ? fp.view : !!sp.view;
+            const eChecked = fp.edit !== undefined ? fp.edit : !!sp.edit;
+            return `<div style="display:flex; gap:10px; align-items:center; padding:3px 0; border-bottom:1px solid #1a2540;">
+              <span style="flex:1; color:#94a3b8;">${f.label}</span>
+              <label style="font-size:10px;"><input type="checkbox" data-fieldperm="view" data-sheet="${s.id}" data-field="${f.key}" ${vChecked?'checked':''}> مشاهده</label>
+              <label style="font-size:10px;"><input type="checkbox" data-fieldperm="edit" data-sheet="${s.id}" data-field="${f.key}" ${eChecked?'checked':''}> ویرایش</label>
+            </div>`;
+          }).join('');
+          return `
           <span class="sheet-name">${s.name}</span>
-          <label style="font-size:10px;"><input type="checkbox" data-perm="view" data-sheet="${s.id}" ${((u.perms||{})[s.id]||{}).view?'checked':''}> مشاهده</label>
-          <label style="font-size:10px;"><input type="checkbox" data-perm="edit" data-sheet="${s.id}" ${((u.perms||{})[s.id]||{}).edit?'checked':''}> ویرایش</label>
-        `).join('') + `</div>` : ''}
+          <label style="font-size:10px;"><input type="checkbox" data-perm="view" data-sheet="${s.id}" ${sp.view?'checked':''}> مشاهده</label>
+          <label style="font-size:10px;"><input type="checkbox" data-perm="edit" data-sheet="${s.id}" ${sp.edit?'checked':''}> ویرایش</label>
+          <button type="button" class="mini-btn" data-togglefields="${s.id}">فیلدها ${openFieldPanels.has(u.id+':'+s.id)?'▴':'▾'}</button>
+          <div class="field-perm-panel" data-fieldpanel="${s.id}" style="display:${openFieldPanels.has(u.id+':'+s.id)?'block':'none'}; grid-column:1/5; background:#0c1327; border-radius:6px; padding:8px 10px; margin-bottom:6px;">
+            <div style="font-size:10px; color:#64748b; margin-bottom:6px;">اگر تیک جداگانه‌ای برای یک فیلد نزنید، همان تنظیم «مشاهده/ویرایش سرفصل» بالا برایش اعمال می‌شود. اگر «مشاهده سرفصل» خاموش باشد، کاربر اصلاً این سرفصل را نمی‌بیند (فیلدها بی‌اثرند).</div>
+            ${fieldsHtml || '<div style="font-size:10.5px;color:#64748b;">این سرفصل فیلدی ندارد.</div>'}
+          </div>`;
+        }).join('') + `</div>` : ''}
     </div>`).join('');
   el.querySelectorAll('[data-deluser]').forEach(b => b.onclick = async () => {
     const uid = b.getAttribute('data-deluser');
@@ -1096,7 +1611,37 @@ function renderUsersList() {
     showToast('دسترسی شهرستانی ' + u.name + ' ذخیره شد');
     renderShell();
   });
-  el.querySelectorAll('[data-permsfor] input[type=checkbox]').forEach(chk => {
+  el.querySelectorAll('[data-permsfor]').forEach(wrap => {
+    const uid = wrap.getAttribute('data-permsfor');
+    wrap.querySelectorAll('[data-togglefields]').forEach(btn => {
+      btn.onclick = () => {
+        const sid = btn.getAttribute('data-togglefields');
+        const panelKey = uid + ':' + sid;
+        if (openFieldPanels.has(panelKey)) openFieldPanels.delete(panelKey); else openFieldPanels.add(panelKey);
+        renderUsersList();
+      };
+    });
+    wrap.querySelectorAll('[data-fieldperm]').forEach(chk => {
+      chk.onchange = async () => {
+        const sid = chk.getAttribute('data-sheet');
+        const fkey = chk.getAttribute('data-field');
+        const kind = chk.getAttribute('data-fieldperm');
+        const u = users.find(x=>x.id===uid);
+        u.perms = u.perms || {};
+        u.perms[sid] = u.perms[sid] || { view:false, edit:false };
+        u.perms[sid].fields = u.perms[sid].fields || {};
+        u.perms[sid].fields[fkey] = u.perms[sid].fields[fkey] || {};
+        u.perms[sid].fields[fkey][kind] = chk.checked;
+        if (kind === 'edit' && chk.checked) u.perms[sid].fields[fkey].view = true;
+        await saveUsers();
+        const sheetName = (schema.sheets.find(s=>s.id===sid)||{}).name || sid;
+        const fLabel = (schema.sheets.find(s=>s.id===sid)?.fields||[]).find(f=>f.key===fkey)?.label || fkey;
+        logActivity('تغییر دسترسی فیلد', 'دسترسی «' + u.name + '» به فیلد «' + fLabel + '» در «' + sheetName + '» — ' + (kind==='view'?'مشاهده':'ویرایش') + ': ' + (chk.checked?'فعال':'غیرفعال'));
+        renderUsersList();
+      };
+    });
+  });
+  el.querySelectorAll('[data-permsfor] input[type=checkbox][data-perm]').forEach(chk => {
     chk.onchange = async () => {
       const wrap = chk.closest('[data-permsfor]');
       const uid = wrap.getAttribute('data-permsfor');
@@ -1142,13 +1687,18 @@ document.getElementById('exportExcelBtn').onclick = () => {
     const recs = recordsBySheet[sheet.id] || [];
     const rows = recs.map(r => {
       const row = { 'نام': r.name, 'lat': r.lat || '', 'lon': r.lon || '' };
-      sheet.fields.forEach(f => { row[f.label] = r.fields[f.key] ?? ''; });
+      sheet.fields.forEach(f => { row[f.label] = excelCellVal(f, r.fields[f.key]); });
       return row;
     });
     const ws = XLSX.utils.json_to_sheet(rows);
     XLSX.utils.book_append_sheet(wb, ws, sheet.name.substring(0,31));
   });
+  const usersRows = users.map(u => ({ 'نام': u.name, 'نقش': u.role==='admin'?'مدیر سیستم':'کاربر محدود', 'شهرستان‌های مجاز': (u.allowedShahrestans||[]).join('، ') || 'همه' }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(usersRows), 'کاربران');
+  const msgRows = messages.map(m => ({ 'تاریخ': new Date(m.ts).toLocaleString('fa-IR'), 'فرستنده': m.from, 'متن': m.text }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(msgRows), 'پیام‌ها');
   XLSX.writeFile(wb, 'اراضی_بنیاد_مسکن_یزد.xlsx');
+  showToast('خروجی اکسل کامل (قابل مشاهده حتی بدون اینترنت) دانلود شد');
 };
 
 document.getElementById('importExcelFile').addEventListener('change', async (e) => {
@@ -1265,7 +1815,7 @@ async function loadMessages() {
   messages = await storeGet('app_messages', true);
   if (!messages) { messages = []; await storeSet('app_messages', messages, true); }
 }
-async function saveMessages() { await storeSet('app_messages', messages, true); pushSnapshotToDropbox(); }
+async function saveMessages() { await storeSet('app_messages', messages, true); return await pushSnapshotToDropbox(); }
 
 function renderMessagesContent() {
   const content = document.getElementById('content');
@@ -1502,9 +2052,10 @@ function snapshotAllData() {
   return { schema, recordsBySheet, users, messages, theme, activityLog, savedAt: Date.now() };
 }
 async function pushSnapshotToDropbox() {
-  if (!dbx.connected) return;
-  try { await dbxUploadJson('/samane_data.json', snapshotAllData()); }
-  catch (e) { console.error('dropbox sync push failed', e); }
+  if (!dbx.connected) return true; // no Dropbox connected: nothing to sync, don't report as failure
+  if (!navigator.onLine) { console.warn('offline: skipped Dropbox push'); return false; }
+  try { await dbxUploadJson('/samane_data.json', snapshotAllData()); return true; }
+  catch (e) { console.error('dropbox sync push failed', e); return false; }
 }
 async function pullSnapshotFromDropboxIfConnected() {
   if (!dbx.connected) return false;
@@ -1524,13 +2075,98 @@ async function pullSnapshotFromDropboxIfConnected() {
   return false;
 }
 
+document.getElementById('downloadBackupBtn').onclick = () => {
+  const data = snapshotAllData();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const now = new Date();
+  const stamp = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + '_' + String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0');
+  a.href = url;
+  a.download = 'samane_pashtibaan_' + stamp + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('فایل پشتیبان دانلود شد');
+};
+document.getElementById('restoreBackupBtn').onclick = () => {
+  document.getElementById('restoreBackupFile').click();
+};
+document.getElementById('restoreBackupFile').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (!confirm('با این کار، تمام داده‌های فعلی (سرفصل‌ها، ردیف‌ها، کاربران، پیام‌ها) با محتوای این فایل جایگزین می‌شود. آیا مطمئن هستید؟')) { e.target.value = ''; return; }
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    schema = data.schema || schema;
+    if (!schema.pendingFields) schema.pendingFields = [];
+    recordsBySheet = data.recordsBySheet || recordsBySheet;
+    users = data.users || users;
+    messages = data.messages || messages;
+    theme = data.theme || theme;
+    activityLog = data.activityLog || activityLog;
+    await saveSchema(); await saveUsers(); await saveMessages(); await saveActivityLog();
+    for (const sheetId of Object.keys(recordsBySheet)) { await saveRecords(sheetId); }
+    logActivity('بازیابی پشتیبان', 'داده‌ها از یک فایل پشتیبان دستی بازیابی شد');
+    showToast('بازیابی با موفقیت انجام شد ✅');
+    renderShell();
+  } catch (err) {
+    console.error(err);
+    showToast('فایل پشتیبان نامعتبر است');
+  }
+  e.target.value = '';
+};
+
 /* ---- UI wiring ---- */
+async function dbxGetSpaceUsage() {
+  const token = await dbxGetAccessToken();
+  const resp = await fetch('https://api.dropboxapi.com/2/users/get_space_usage', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token }
+  });
+  if (!resp.ok) throw new Error('space usage failed: ' + resp.status);
+  return await resp.json();
+}
+function formatBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+  if (n < 1024*1024*1024) return (n/1024/1024).toFixed(1) + ' MB';
+  return (n/1024/1024/1024).toFixed(2) + ' GB';
+}
+async function refreshCloudSpaceLine() {
+  const el = document.getElementById('cloudSpaceLine');
+  if (!el) return;
+  if (!dbx.connected) { el.textContent = 'برای دیدن فضای اشغال‌شده، اول باید Dropbox متصل باشد.'; el.style.color = '#64748b'; return; }
+  if (!navigator.onLine) { el.textContent = '🔴 آفلاین هستید — با وصل‌شدن اینترنت، فضای اشغال‌شده اینجا نمایش داده می‌شود.'; el.style.color = '#f87171'; return; }
+  el.textContent = 'در حال بررسی فضای اشغال‌شده...';
+  el.style.color = '#94a3b8';
+  try {
+    const usage = await dbxGetSpaceUsage();
+    const used = usage.used || 0;
+    const alloc = (usage.allocation && (usage.allocation.allocated || (usage.allocation.individual && usage.allocation.individual.allocated))) || 0;
+    if (alloc) {
+      const pct = Math.min(100, (used / alloc * 100));
+      const warn = pct >= 90 ? ' ⚠️ فضای Dropbox شما رو به اتمام است — برای جلوگیری از قطع‌شدن ذخیره‌سازی، فایل‌های اضافی را پاک یا فضا را ارتقا دهید.' : '';
+      el.innerHTML = `فضای Dropbox: ${formatBytes(used)} از ${formatBytes(alloc)} استفاده شده (${pct.toFixed(1)}٪)${warn}`;
+      el.style.color = pct >= 90 ? '#f87171' : (pct >= 70 ? '#facc15' : '#94a3b8');
+    } else {
+      el.textContent = 'فضای استفاده‌شده: ' + formatBytes(used);
+    }
+  } catch (e) {
+    console.error('space usage error', e);
+    el.textContent = '⚠️ نتوانستم فضای اشغال‌شده را از Dropbox بگیرم — دوباره تلاش کنید.';
+    el.style.color = '#f87171';
+  }
+}
 function refreshCloudStatusLine() {
   const el = document.getElementById('cloudStatusLine');
   if (!el) return;
   el.textContent = dbx.connected ? ('وضعیت: متصل ✅ (App Key: ' + dbx.appKey + ')') : 'وضعیت: متصل نیست';
   document.getElementById('dbxAppKey').value = dbx.appKey || '';
   document.getElementById('dbxConnCode').value = dbx.connected ? (dbx.appKey + '::' + dbx.refreshToken) : '';
+  refreshCloudSpaceLine();
 }
 function openCloudModal() {
   refreshCloudStatusLine();
@@ -1574,8 +2210,28 @@ function showToast(msg) {
   t.textContent = msg;
   t.style.display = 'block';
   clearTimeout(window.__toastTimer);
-  window.__toastTimer = setTimeout(()=>{ t.style.display='none'; }, 3200);
+  const duration = Math.min(8000, Math.max(3200, msg.length * 60));
+  window.__toastTimer = setTimeout(()=>{ t.style.display='none'; }, duration);
 }
+
+function updateOfflineBadge() {
+  const el = document.getElementById('offlineBadge');
+  if (!el) return;
+  if (navigator.onLine) {
+    el.textContent = '🟢 آنلاین';
+    el.style.background = '#14532d';
+    el.style.color = '#bbf7d0';
+  } else {
+    el.textContent = '🔴 آفلاین — تغییرات ذخیره نمی‌شود';
+    el.style.background = '#7f1d1d';
+    el.style.color = '#fecaca';
+  }
+}
+window.addEventListener('online', updateOfflineBadge);
+window.addEventListener('offline', updateOfflineBadge);
+setInterval(() => {
+  if (!navigator.onLine) showToast('🔴 اتصال اینترنت قطع است — تغییرات جدید ذخیره نمی‌شوند تا وقتی دوباره وصل شوید.');
+}, 10 * 60 * 1000);
 
 /* =====================================================================
    BOOT
@@ -1592,6 +2248,7 @@ function showToast(msg) {
     else if (justConnected) await pushSnapshotToDropbox(); // first-ever connect: seed the cloud file
   }
   populateLoginSelect();
+  updateOfflineBadge();
 })();
 </script>
 </body>
