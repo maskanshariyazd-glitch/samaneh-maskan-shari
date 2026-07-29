@@ -176,6 +176,7 @@
     <div id="topbar">
       <div class="title">اراضی بنیاد مسکن یزد</div>
       <div id="tabs"></div>
+      <div id="offlineBadge" style="font-size:11px; padding:3px 10px; border-radius:12px; white-space:nowrap; background:#14532d; color:#bbf7d0;">🟢 آنلاین</div>
       <div id="userBadge"></div>
       <button id="logoutBtn">خروج</button>
     </div>
@@ -404,9 +405,9 @@ async function loadAll() {
   if (!activityLog) { activityLog = []; await storeSet('app_activity_log', activityLog, true); }
 }
 
-async function saveSchema() { await storeSet('app_schema', schema, true); pushSnapshotToDropbox(); }
-async function saveUsers() { await storeSet('app_users', users, true); pushSnapshotToDropbox(); }
-async function saveRecords(sheetId) { await storeSet('records_' + sheetId, recordsBySheet[sheetId] || [], true); pushSnapshotToDropbox(); }
+async function saveSchema() { await storeSet('app_schema', schema, true); return await pushSnapshotToDropbox(); }
+async function saveUsers() { await storeSet('app_users', users, true); return await pushSnapshotToDropbox(); }
+async function saveRecords(sheetId) { await storeSet('records_' + sheetId, recordsBySheet[sheetId] || [], true); return await pushSnapshotToDropbox(); }
 async function saveActivityLog() { await storeSet('app_activity_log', activityLog, true); pushSnapshotToDropbox(); }
 function logActivity(action, detail) {
   activityLog.push({
@@ -1332,10 +1333,14 @@ async function saveRecordFromModal(sheetId) {
     recordsBySheet[sheetId].push(newRec);
     logActivity('افزودن ردیف', 'سرفصل «' + sheet.name + '» — ردیف «' + (name||'بدون نام') + '»');
   }
-  await saveRecords(sheetId);
+  const synced = await saveRecords(sheetId);
   closeModal('recordModalOverlay');
   renderContent();
-  showToast('ذخیره شد');
+  if (synced) {
+    showToast('ذخیره شد ✅');
+  } else {
+    showToast('⚠️ به اینترنت/Dropbox وصل نشد — این تغییر فقط موقتاً روی همین صفحه است و با رفرش یا بستن صفحه از بین می‌رود. لطفاً اتصال اینترنت را بررسی کنید و دوباره ذخیره کنید.');
+  }
 }
 
 /* =====================================================================
@@ -1810,7 +1815,7 @@ async function loadMessages() {
   messages = await storeGet('app_messages', true);
   if (!messages) { messages = []; await storeSet('app_messages', messages, true); }
 }
-async function saveMessages() { await storeSet('app_messages', messages, true); pushSnapshotToDropbox(); }
+async function saveMessages() { await storeSet('app_messages', messages, true); return await pushSnapshotToDropbox(); }
 
 function renderMessagesContent() {
   const content = document.getElementById('content');
@@ -2047,9 +2052,10 @@ function snapshotAllData() {
   return { schema, recordsBySheet, users, messages, theme, activityLog, savedAt: Date.now() };
 }
 async function pushSnapshotToDropbox() {
-  if (!dbx.connected) return;
-  try { await dbxUploadJson('/samane_data.json', snapshotAllData()); }
-  catch (e) { console.error('dropbox sync push failed', e); }
+  if (!dbx.connected) return true; // no Dropbox connected: nothing to sync, don't report as failure
+  if (!navigator.onLine) { console.warn('offline: skipped Dropbox push'); return false; }
+  try { await dbxUploadJson('/samane_data.json', snapshotAllData()); return true; }
+  catch (e) { console.error('dropbox sync push failed', e); return false; }
 }
 async function pullSnapshotFromDropboxIfConnected() {
   if (!dbx.connected) return false;
@@ -2132,8 +2138,10 @@ function formatBytes(n) {
 async function refreshCloudSpaceLine() {
   const el = document.getElementById('cloudSpaceLine');
   if (!el) return;
-  if (!dbx.connected) { el.textContent = ''; return; }
+  if (!dbx.connected) { el.textContent = 'برای دیدن فضای اشغال‌شده، اول باید Dropbox متصل باشد.'; el.style.color = '#64748b'; return; }
+  if (!navigator.onLine) { el.textContent = '🔴 آفلاین هستید — با وصل‌شدن اینترنت، فضای اشغال‌شده اینجا نمایش داده می‌شود.'; el.style.color = '#f87171'; return; }
   el.textContent = 'در حال بررسی فضای اشغال‌شده...';
+  el.style.color = '#94a3b8';
   try {
     const usage = await dbxGetSpaceUsage();
     const used = usage.used || 0;
@@ -2148,7 +2156,8 @@ async function refreshCloudSpaceLine() {
     }
   } catch (e) {
     console.error('space usage error', e);
-    el.textContent = '';
+    el.textContent = '⚠️ نتوانستم فضای اشغال‌شده را از Dropbox بگیرم — دوباره تلاش کنید.';
+    el.style.color = '#f87171';
   }
 }
 function refreshCloudStatusLine() {
@@ -2201,8 +2210,28 @@ function showToast(msg) {
   t.textContent = msg;
   t.style.display = 'block';
   clearTimeout(window.__toastTimer);
-  window.__toastTimer = setTimeout(()=>{ t.style.display='none'; }, 3200);
+  const duration = Math.min(8000, Math.max(3200, msg.length * 60));
+  window.__toastTimer = setTimeout(()=>{ t.style.display='none'; }, duration);
 }
+
+function updateOfflineBadge() {
+  const el = document.getElementById('offlineBadge');
+  if (!el) return;
+  if (navigator.onLine) {
+    el.textContent = '🟢 آنلاین';
+    el.style.background = '#14532d';
+    el.style.color = '#bbf7d0';
+  } else {
+    el.textContent = '🔴 آفلاین — تغییرات ذخیره نمی‌شود';
+    el.style.background = '#7f1d1d';
+    el.style.color = '#fecaca';
+  }
+}
+window.addEventListener('online', updateOfflineBadge);
+window.addEventListener('offline', updateOfflineBadge);
+setInterval(() => {
+  if (!navigator.onLine) showToast('🔴 اتصال اینترنت قطع است — تغییرات جدید ذخیره نمی‌شوند تا وقتی دوباره وصل شوید.');
+}, 10 * 60 * 1000);
 
 /* =====================================================================
    BOOT
@@ -2219,6 +2248,7 @@ function showToast(msg) {
     else if (justConnected) await pushSnapshotToDropbox(); // first-ever connect: seed the cloud file
   }
   populateLoginSelect();
+  updateOfflineBadge();
 })();
 </script>
 </body>
