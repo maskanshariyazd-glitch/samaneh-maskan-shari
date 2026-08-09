@@ -291,9 +291,44 @@
       <div class="form-row"><label>آدرس تصویر پس‌زمینه (URL) — اختیاری</label><input id="themeBgUrl" placeholder="https://..."></div>
       <div class="form-row"><label>یا آپلود تصویر از سیستم شما — اختیاری</label><input id="themeBgFile" type="file" accept="image/*"></div>
       <div style="font-size:10px;color:#64748b;margin-bottom:10px;">آپلود، تصویر را به‌صورت فایل درون سامانه ذخیره می‌کند (حجم زیاد توصیه نمی‌شود). اگر هر دو را پر کنید، فایل آپلودی اولویت دارد.</div>
+      <h2 style="margin-top:18px;">امنیت ورود</h2>
+      <div class="note-box">اگر کاربری برای مدت تعیین‌شده هیچ فعالیتی (کلیک، تایپ، حرکت ماوس/لمس) نداشته باشد، به‌صورت خودکار از حساب خارج می‌شود و باید دوباره وارد شود.</div>
+      <div class="form-row"><label>خروج خودکار بعد از بی‌فعالیتی (دقیقه) — عدد ۰ یعنی غیرفعال</label><input id="idleTimeoutMinutes" type="number" min="0" step="1" value="0"></div>
+      <h2 style="margin-top:18px;">احراز هویت دو مرحله‌ای پیامکی (فقط مدیر سیستم)</h2>
+      <div class="note-box">با فعال‌کردن این گزینه، بعد از وارد کردن صحیح PIN مدیر، یک کد ۶ رقمی به شماره موبایل ثبت‌شدهٔ او (از بخش «مدیریت کاربران») پیامک می‌شود و ورود فقط با وارد کردن آن کد کامل می‌شود.<br>
+      برای ارسال واقعی پیامک باید آدرس یک «وب‌سرویس واسط» را این‌جا وارد کنید که کد را از طریق سامانه پیامکی tsms.ir بفرستد (چون کلید API پیامک نباید داخل همین فایل وب باشد، وگرنه هرکسی با دیدن کد صفحه به آن دسترسی پیدا می‌کند). تا وقتی این آدرس تنظیم نشده، سامانه در «حالت آزمایشی» کد را به‌جای پیامک، در قالب یک اعلان روی صفحه نشان می‌دهد.</div>
+      <div class="form-row"><label><input type="checkbox" id="otpEnabled" style="width:auto; margin-left:6px;"> فعال‌سازی کد پیامکی برای ورود مدیر سیستم</label></div>
+      <div class="form-row"><label>آدرس وب‌سرویس واسط ارسال پیامک (Webhook) — اختیاری</label><input id="otpWebhookUrl" placeholder="https://your-worker.workers.dev/send-otp"></div>
+      <div class="form-row"><label>کلید امنیتی مشترک وب‌سرویس (Secret) — اختیاری</label><input id="otpWebhookSecret" placeholder="همان مقداری که هنگام ساخت وب‌سرویس واسط تعیین کردید"></div>
       <div class="modal-actions">
         <button class="btn primary" id="applyThemeBtn">اعمال و ذخیره</button>
         <button class="btn ghost" id="resetThemeBtn">بازگشت به حالت پیش‌فرض</button>
+      </div>
+    </div>
+  </div>
+  <!-- OTP (SMS 2FA) modal -->
+  <div class="modal-overlay" id="otpModalOverlay">
+    <div class="modal-box" style="width:380px;">
+      <h2>تایید ورود با کد پیامکی</h2>
+      <div class="note-box" id="otpInfoText">کد ۶ رقمی برای شماره موبایل ثبت‌شدهٔ شما ارسال شد.</div>
+      <div class="form-row"><label>کد پیامکی</label><input id="otpCodeInput" maxlength="6" inputmode="numeric" placeholder="مثلاً 482913" style="letter-spacing:4px; font-size:16px; text-align:center;"></div>
+      <div class="login-err" id="otpErr"></div>
+      <div class="modal-actions">
+        <button class="btn primary" id="otpConfirmBtn">تایید و ورود</button>
+        <button class="btn ghost" id="otpResendBtn">ارسال مجدد کد</button>
+        <button class="btn ghost" id="otpCancelBtn">انصراف</button>
+      </div>
+    </div>
+  </div>
+  <!-- confirm-changes modal (shown before final save of any record) -->
+  <div class="modal-overlay" id="confirmChangesModalOverlay">
+    <div class="modal-box" style="width:420px;">
+      <h2>تایید نهایی تغییرات</h2>
+      <div class="note-box">لطفاً تغییراتی که ثبت می‌کنید را بررسی کنید. با زدن «تایید و ثبت نهایی» این تغییرات ذخیره خواهد شد.</div>
+      <div id="confirmChangesList" style="max-height:300px; overflow:auto; margin-bottom:12px;"></div>
+      <div class="modal-actions">
+        <button class="btn primary" id="confirmChangesOkBtn">تایید و ثبت نهایی</button>
+        <button class="btn ghost" id="confirmChangesCancelBtn">لغو و بازگشت به ویرایش</button>
       </div>
     </div>
   </div>
@@ -509,8 +544,21 @@ document.getElementById('loginBtn').onclick = () => {
     document.getElementById('loginErr').textContent = 'نام کاربر یا رمز اشتباه است';
     return;
   }
+  document.getElementById('loginErr').textContent = '';
+  if (u.role === 'admin' && theme.otpEnabled) {
+    if (!u.mobile) {
+      document.getElementById('loginErr').textContent = 'احراز هویت پیامکی فعال است ولی برای این مدیر شماره موبایل ثبت نشده — از بخش مدیریت کاربران شماره را وارد کنید.';
+      return;
+    }
+    startOtpFlow(u);
+    return;
+  }
+  completeLogin(u);
+};
+function completeLogin(u) {
   currentUser = u;
   document.getElementById('loginScreen').style.display = 'none';
+  applyIdleTimeoutSetting();
   const lastMsg = messages && messages.length ? messages[messages.length - 1] : null;
   if (lastMsg && lastMsg.text) {
     document.getElementById('welcomeMsgText').textContent = lastMsg.text;
@@ -519,17 +567,88 @@ document.getElementById('loginBtn').onclick = () => {
     document.getElementById('appShell').style.display = 'flex';
     renderShell();
   }
-};
+}
 document.getElementById('welcomeMsgOkBtn').onclick = () => {
   closeModal('welcomeMsgOverlay');
   document.getElementById('appShell').style.display = 'flex';
   renderShell();
+  resetIdleTimer();
 };
 document.getElementById('logoutBtn').onclick = () => {
   currentUser = null;
+  clearTimeout(idleTimer);
   document.getElementById('appShell').style.display = 'none';
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('loginPin').value = '';
+};
+
+/* ---------- SMS OTP (2-step admin login) ---------- */
+let pendingOtp = null; // { user, code, expiresAt, attempts }
+function genOtpCode() { return String(Math.floor(100000 + Math.random() * 900000)); }
+async function sendOtpSms(mobile, code) {
+  // NOTE: the webhook (theme.otpWebhookUrl) is expected to be a small serverless
+  // proxy that holds the real tsms.ir API credentials and forwards {mobile, code}
+  // to tsms.ir. Credentials must never be embedded directly in this file, since
+  // anyone can view the page source.
+  if (!theme.otpWebhookUrl) {
+    showToast('⚠️ حالت آزمایشی (وب‌سرویس پیامک تنظیم نشده) — کد ورود شما: ' + code);
+    return true;
+  }
+  try {
+    const resp = await fetch(theme.otpWebhookUrl, {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, theme.otpWebhookSecret ? { 'X-Proxy-Secret': theme.otpWebhookSecret } : {}),
+      body: JSON.stringify({ mobile, code, text: 'کد ورود شما به سامانه اراضی بنیاد مسکن یزد: ' + code })
+    });
+    return resp.ok;
+  } catch (e) {
+    console.error('otp send failed', e);
+    return false;
+  }
+}
+async function startOtpFlow(u) {
+  const code = genOtpCode();
+  pendingOtp = { user: u, code, expiresAt: Date.now() + 5*60*1000, attempts: 0 };
+  document.getElementById('otpCodeInput').value = '';
+  document.getElementById('otpErr').textContent = '';
+  const maskedMobile = u.mobile ? (u.mobile.slice(0,4) + '***' + u.mobile.slice(-2)) : '';
+  document.getElementById('otpInfoText').textContent = 'در حال ارسال کد به شماره ' + maskedMobile + ' ...';
+  openModal('otpModalOverlay');
+  const ok = await sendOtpSms(u.mobile, code);
+  document.getElementById('otpInfoText').textContent = ok
+    ? ('کد ۶ رقمی برای شماره ' + maskedMobile + ' ارسال شد. اعتبار کد ۵ دقیقه است.')
+    : ('⚠️ ارسال پیامک ناموفق بود. اتصال اینترنت یا تنظیمات وب‌سرویس را بررسی کنید و «ارسال مجدد» را بزنید.');
+}
+document.getElementById('otpConfirmBtn').onclick = () => {
+  if (!pendingOtp) return;
+  if (Date.now() > pendingOtp.expiresAt) {
+    document.getElementById('otpErr').textContent = 'اعتبار کد تمام شده — «ارسال مجدد» را بزنید.';
+    return;
+  }
+  pendingOtp.attempts++;
+  if (pendingOtp.attempts > 5) {
+    document.getElementById('otpErr').textContent = 'تعداد تلاش‌های مجاز تمام شد — دوباره وارد شوید.';
+    pendingOtp = null;
+    closeModal('otpModalOverlay');
+    return;
+  }
+  const entered = document.getElementById('otpCodeInput').value.trim();
+  if (entered !== pendingOtp.code) {
+    document.getElementById('otpErr').textContent = 'کد وارد شده صحیح نیست.';
+    return;
+  }
+  const u = pendingOtp.user;
+  pendingOtp = null;
+  closeModal('otpModalOverlay');
+  completeLogin(u);
+};
+document.getElementById('otpResendBtn').onclick = () => {
+  if (!pendingOtp) return;
+  startOtpFlow(pendingOtp.user);
+};
+document.getElementById('otpCancelBtn').onclick = () => {
+  pendingOtp = null;
+  closeModal('otpModalOverlay');
 };
 
 /* =====================================================================
@@ -1274,7 +1393,7 @@ function openRecordModal(sheetId, recId) {
     };
   });
   document.getElementById('proposeFieldBtn').onclick = () => proposeOrAddField(sheetId);
-  document.getElementById('saveRecordBtn').onclick = () => saveRecordFromModal(sheetId);
+  document.getElementById('saveRecordBtn').onclick = () => openConfirmChangesModal(sheetId);
   document.getElementById('calcCoordBtn').onclick = () => {
     const res = parseRawCoord(document.getElementById('rawCoordInput').value);
     if (res) { document.getElementById('latInput').value = res[0].toFixed(6); document.getElementById('lonInput').value = res[1].toFixed(6); showToast('مختصات محاسبه شد'); }
@@ -1306,21 +1425,85 @@ function proposeOrAddField(sheetId) {
   }
 }
 
-async function saveRecordFromModal(sheetId) {
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function collectRecordFormData(sheetId) {
   const sheet = schema.sheets.find(s=>s.id===sheetId);
   const name = document.getElementById('fld_name').value;
   const lat = parseFloat(document.getElementById('latInput').value);
   const lon = parseFloat(document.getElementById('lonInput').value);
   const existingRec = editingRecordId ? (recordsBySheet[sheetId]||[]).find(r=>r.id===editingRecordId) : null;
-  const fields = existingRec ? { ...existingRec.fields } : {}; // start from existing values so hidden (no-view) fields are preserved
+  const fields = existingRec ? { ...existingRec.fields } : {};
   document.querySelectorAll('#dynamicFields [data-field]').forEach(inp => {
     const key = inp.getAttribute('data-field');
     const f = sheet.fields.find(x=>x.key===key);
-    if (fieldPermsFor(currentUser, sheetId, key).edit === false) return; // read-only field: keep original value, ignore any DOM value
+    if (fieldPermsFor(currentUser, sheetId, key).edit === false) return;
     let v = inp.value;
     if (f && f.type === 'number' && v !== '') v = parseFloat(v);
     fields[key] = v === '' ? null : v;
   });
+  return { sheet, existingRec, name, lat, lon, fields };
+}
+function buildRecordDiff(data) {
+  const { sheet, existingRec, name, lat, lon, fields } = data;
+  const diffs = [];
+  const oldName = existingRec ? (existingRec.name || '') : '';
+  if ((name || '') !== oldName) diffs.push({ label: 'نام / شرح', from: oldName || '—', to: name || '—' });
+  const oldLat = existingRec && existingRec.lat != null ? existingRec.lat : null;
+  const oldLon = existingRec && existingRec.lon != null ? existingRec.lon : null;
+  const newLat = !isNaN(lat) ? lat : null;
+  const newLon = !isNaN(lon) ? lon : null;
+  if (oldLat !== newLat || oldLon !== newLon) {
+    diffs.push({
+      label: 'مختصات',
+      from: (oldLat != null && oldLon != null) ? (oldLat + '، ' + oldLon) : '—',
+      to: (newLat != null && newLon != null) ? (newLat + '، ' + newLon) : '—'
+    });
+  }
+  sheet.fields.forEach(f => {
+    const oldV = existingRec ? (existingRec.fields[f.key] ?? '') : '';
+    const newV = fields[f.key] ?? '';
+    if (String(oldV ?? '') !== String(newV ?? '')) {
+      if (f.type === 'image') {
+        diffs.push({ label: f.label, from: oldV ? 'تصویر قبلی' : '—', to: newV ? 'تصویر جدید' : '— (حذف شد)' });
+      } else {
+        diffs.push({ label: f.label, from: (oldV===''||oldV==null) ? '—' : String(oldV), to: (newV===''||newV==null) ? '—' : String(newV) });
+      }
+    }
+  });
+  return diffs;
+}
+let pendingSave = null;
+function openConfirmChangesModal(sheetId) {
+  const data = collectRecordFormData(sheetId);
+  const diffs = buildRecordDiff(data);
+  pendingSave = { sheetId, data };
+  const listEl = document.getElementById('confirmChangesList');
+  if (!diffs.length) {
+    listEl.innerHTML = '<div style="color:#64748b;font-size:12px;">هیچ تغییری نسبت به قبل ثبت نشده است.</div>';
+  } else {
+    listEl.innerHTML = diffs.map(d => `
+      <div style="border-bottom:1px solid #1f2b47;padding:6px 0;">
+        <div style="font-size:11px;color:#94a3b8;margin-bottom:2px;">${escapeHtml(d.label)}</div>
+        <div style="font-size:12.5px;"><span style="color:#f87171;text-decoration:line-through;">${escapeHtml(d.from)}</span> ← <span style="color:#4ade80;">${escapeHtml(d.to)}</span></div>
+      </div>`).join('');
+  }
+  openModal('confirmChangesModalOverlay');
+}
+document.getElementById('confirmChangesOkBtn').onclick = async () => {
+  if (!pendingSave) return;
+  const { sheetId, data } = pendingSave;
+  pendingSave = null;
+  closeModal('confirmChangesModalOverlay');
+  await commitRecordSave(sheetId, data);
+};
+document.getElementById('confirmChangesCancelBtn').onclick = () => {
+  pendingSave = null;
+  closeModal('confirmChangesModalOverlay');
+};
+async function commitRecordSave(sheetId, data) {
+  const { sheet, existingRec, name, lat, lon, fields } = data;
   if (editingRecordId) {
     const rec = recordsBySheet[sheetId].find(r=>r.id===editingRecordId);
     rec.name = name; rec.fields = fields;
@@ -1550,6 +1733,10 @@ function renderUsersList() {
         <input type="password" data-newpin="${u.id}" placeholder="رمز جدید برای ${u.name}" style="flex:1; padding:6px 8px; border-radius:6px; border:1px solid #2a3a5c; background:#0c1327; color:#fff; font-size:11.5px;">
         <button class="mini-btn" data-savepin="${u.id}">ذخیره رمز جدید</button>
       </div>
+      ${u.role === 'admin' ? `<div style="display:flex; gap:6px; align-items:center; margin-bottom:8px;">
+        <input type="text" data-newmobile="${u.id}" placeholder="شماره موبایل برای پیامک کد ورود (مثلاً 09131234567)" value="${u.mobile||''}" style="flex:1; padding:6px 8px; border-radius:6px; border:1px solid #2a3a5c; background:#0c1327; color:#fff; font-size:11.5px;">
+        <button class="mini-btn" data-savemobile="${u.id}">ذخیره شماره</button>
+      </div>` : ''}
       ${u.role === 'user' ? `<div style="display:flex; gap:6px; align-items:center; margin-bottom:8px;">
         <input type="text" data-newshahrestan="${u.id}" placeholder="شهرستان‌های مجاز، با ، جدا کنید (خالی = دسترسی به همه شهرستان‌ها)" value="${(u.allowedShahrestans||[]).join('، ')}" style="flex:1; padding:6px 8px; border-radius:6px; border:1px solid #2a3a5c; background:#0c1327; color:#fff; font-size:11.5px;">
         <button class="mini-btn" data-saveshahrestan="${u.id}">ذخیره شهرستان‌ها</button>
@@ -1585,6 +1772,17 @@ function renderUsersList() {
     await saveUsers();
     logActivity('حذف کاربر', 'کاربر «' + (u?u.name:uid) + '» حذف شد');
     renderUsersList();
+  });
+  el.querySelectorAll('[data-savemobile]').forEach(b => b.onclick = async () => {
+    const uid = b.getAttribute('data-savemobile');
+    const input = el.querySelector(`[data-newmobile="${uid}"]`);
+    const mobile = input.value.trim();
+    if (mobile && !/^09\d{9}$/.test(mobile)) { showToast('شماره موبایل معتبر نیست (فرمت: 09xxxxxxxxx)'); return; }
+    const u = users.find(x=>x.id===uid);
+    u.mobile = mobile;
+    await saveUsers();
+    logActivity('تغییر شماره موبایل', 'شماره موبایل «' + u.name + '» به‌روزرسانی شد');
+    showToast('شماره موبایل ' + u.name + ' ذخیره شد');
   });
   el.querySelectorAll('[data-savepin]').forEach(b => b.onclick = async () => {
     const uid = b.getAttribute('data-savepin');
@@ -1853,11 +2051,12 @@ function renderMessagesContent() {
 /* =====================================================================
    THEME (ظاهر سامانه)
 ===================================================================== */
-let theme = { accent:'#2563eb', bgImage:'' };
+let theme = { accent:'#2563eb', bgImage:'', idleTimeoutMinutes:0, otpEnabled:false, otpWebhookUrl:'', otpWebhookSecret:'' };
 async function loadTheme() {
   const t = await storeGet('app_theme', true);
-  if (t) theme = t;
+  if (t) theme = Object.assign({ accent:'#2563eb', bgImage:'', idleTimeoutMinutes:0, otpEnabled:false, otpWebhookUrl:'', otpWebhookSecret:'' }, t);
   applyThemeToPage();
+  applyIdleTimeoutSetting();
 }
 function applyThemeToPage() {
   document.documentElement.style.setProperty('--accent', theme.accent || '#2563eb');
@@ -1866,12 +2065,20 @@ function applyThemeToPage() {
 function openThemeModal() {
   document.getElementById('themeAccent').value = theme.accent || '#2563eb';
   document.getElementById('themeBgUrl').value = (theme.bgImage && !theme.bgImage.startsWith('data:')) ? theme.bgImage : '';
+  document.getElementById('idleTimeoutMinutes').value = theme.idleTimeoutMinutes || 0;
+  document.getElementById('otpEnabled').checked = !!theme.otpEnabled;
+  document.getElementById('otpWebhookUrl').value = theme.otpWebhookUrl || '';
+  document.getElementById('otpWebhookSecret').value = theme.otpWebhookSecret || '';
   openModal('themeModalOverlay');
 }
 document.getElementById('applyThemeBtn').onclick = async () => {
   const accent = document.getElementById('themeAccent').value;
   const url = document.getElementById('themeBgUrl').value.trim();
   const fileInput = document.getElementById('themeBgFile');
+  const idleTimeoutMinutes = Math.max(0, parseInt(document.getElementById('idleTimeoutMinutes').value, 10) || 0);
+  const otpEnabled = document.getElementById('otpEnabled').checked;
+  const otpWebhookUrl = document.getElementById('otpWebhookUrl').value.trim();
+  const otpWebhookSecret = document.getElementById('otpWebhookSecret').value.trim();
   let bgImage = url;
   if (fileInput.files && fileInput.files[0]) {
     const file = fileInput.files[0];
@@ -1885,21 +2092,49 @@ document.getElementById('applyThemeBtn').onclick = async () => {
       reader.readAsDataURL(file);
     });
   }
-  theme = { accent, bgImage };
+  theme = { accent, bgImage, idleTimeoutMinutes, otpEnabled, otpWebhookUrl, otpWebhookSecret };
   await storeSet('app_theme', theme, true);
   pushSnapshotToDropbox();
   applyThemeToPage();
+  applyIdleTimeoutSetting();
   closeModal('themeModalOverlay');
-  showToast('ظاهر سامانه به‌روزرسانی شد');
+  showToast('ظاهر و امنیت سامانه به‌روزرسانی شد');
 };
 document.getElementById('resetThemeBtn').onclick = async () => {
-  theme = { accent:'#2563eb', bgImage:'' };
+  theme = { accent:'#2563eb', bgImage:'', idleTimeoutMinutes:0, otpEnabled:false, otpWebhookUrl:'', otpWebhookSecret:'' };
   await storeSet('app_theme', theme, true);
   pushSnapshotToDropbox();
   applyThemeToPage();
+  applyIdleTimeoutSetting();
   closeModal('themeModalOverlay');
   showToast('به حالت پیش‌فرض بازگشت');
 };
+
+/* ---------- idle / auto-logout ---------- */
+let idleTimer = null;
+let idleTimeoutMs = 0;
+function applyIdleTimeoutSetting() {
+  idleTimeoutMs = (theme.idleTimeoutMinutes || 0) * 60 * 1000;
+  resetIdleTimer();
+}
+function resetIdleTimer() {
+  clearTimeout(idleTimer);
+  if (!currentUser || !idleTimeoutMs) return;
+  idleTimer = setTimeout(autoLogoutIdle, idleTimeoutMs);
+}
+function autoLogoutIdle() {
+  if (!currentUser) return;
+  logActivity('خروج خودکار', 'بدلیل عدم فعالیت (' + (theme.idleTimeoutMinutes || 0) + ' دقیقه)');
+  currentUser = null;
+  document.getElementById('appShell').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('loginPin').value = '';
+  showToast('⏱️ به‌دلیل عدم فعالیت طولانی، از سامانه خارج شدید. لطفاً دوباره وارد شوید.');
+}
+['mousemove','mousedown','keydown','touchstart','wheel','scroll'].forEach(evt => {
+  document.addEventListener(evt, resetIdleTimer, { passive:true });
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden) resetIdleTimer(); });
 
 /* =====================================================================
    CLOUD SYNC (Dropbox) — makes data available from any device/browser,
